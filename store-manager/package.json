@@ -3,7 +3,7 @@
   "productName": "store-manager",
   "version": "1.0.0",
   "description": "My Electron application description",
-  "main": ".webpack/main",
+  "main": ".webpack/main/index.js",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
@@ -42,10 +42,37 @@
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
+    "mssql": "^11.0.1",
     "papaparse": "^5.5.2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.5.0",
     "xlsx": "^0.18.5"
+  },
+  "config": {
+    "forge": {
+      "plugins": [
+        {
+          "name": "@electron-forge/plugin-webpack",
+          "config": {
+            "mainConfig": "./webpack.main.config.js",
+            "renderer": {
+              "config": "./webpack.renderer.config.js",
+              "entryPoints": [
+                {
+                  "name": "main_window",
+                  "html": "./src/index.html",
+                  "js": "./src/renderer.js",
+                  "preload": {
+                    "config": "./webpack.preload.config.js",
+                    "js": "./src/preload.js"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
   }
 }

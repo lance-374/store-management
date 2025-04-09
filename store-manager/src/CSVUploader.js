@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
+import SQLDataModal from './modal/SQLDataModal';
 
 // Helper: convert a zero-based column index to Excel-style letter(s)
 function columnIndexToLetter(index) {
@@ -13,23 +14,23 @@ function columnIndexToLetter(index) {
 }
 
 function CSVUploader() {
-    // State for storing headers (array) and data rows (array of arrays)
+    // States for file data, headers, and SQL data
     const [headers, setHeaders] = useState([]);
     const [dataRows, setDataRows] = useState([]);
-    // The selected SIM column is stored as a column letter (e.g., "A", "B", …)
     const [simColumn, setSimColumn] = useState('');
-    // For filtering by SIM after selecting the correct column
+    const [overrideSerialColumn, setOverrideSerialColumn] = useState(''); // NEW state for override column selection
     const [selectedSim, setSelectedSim] = useState('');
+    const [sqlData, setSqlData] = useState([]);
     const [error, setError] = useState(null);
     const [sheetNames, setSheetNames] = useState([]);
     const [workbook, setWorkbook] = useState(null);
     const [selectedSheet, setSelectedSheet] = useState('');
+    const [showModal, setShowModal] = useState(false);
 
-    // Auto-detect by scanning each column's cells (data rows only)
+    // Auto-detect SIM column by scanning cells in the data rows
     const autoDetectSimColumn = (headerRow, rows) => {
         const numCols = headerRow.length;
         for (let col = 0; col < numCols; col++) {
-            // Scan each data row for this column
             for (const row of rows) {
                 const cell = row[col];
                 if (cell && cell.toString().trim().toLowerCase().startsWith('sim')) {
@@ -37,16 +38,18 @@ function CSVUploader() {
                 }
             }
         }
-        return ''; // Not found
+        return '';
     };
 
     const handleFileChange = (event) => {
-        // Reset state on new file selection
+        // Reset all state on file change
         setError(null);
         setHeaders([]);
         setDataRows([]);
         setSimColumn('');
+        setOverrideSerialColumn(''); // reset override column too
         setSelectedSim('');
+        setSqlData([]);
         setSheetNames([]);
         setWorkbook(null);
         setSelectedSheet('');
@@ -55,7 +58,6 @@ function CSVUploader() {
         if (!file) return;
         const fileName = file.name.toLowerCase();
 
-        // If CSV file, use Papa Parse with header: false (returns array of arrays)
         if (fileName.endsWith('.csv')) {
             Papa.parse(file, {
                 header: false,
@@ -69,17 +71,13 @@ function CSVUploader() {
                         setHeaders(headerRow);
                         setDataRows(rows);
                         const detected = autoDetectSimColumn(headerRow, rows);
-                        if (detected) {
-                            setSimColumn(detected);
-                        }
+                        if (detected) setSimColumn(detected);
                     } else {
                         setError('CSV file does not contain enough data.');
                     }
                 },
             });
-        }
-        // If Excel file, use xlsx with header: 1 (returns an array of arrays)
-        else if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
+        } else if (fileName.endsWith('.xls') || fileName.endsWith('.xlsx')) {
             const reader = new FileReader();
             reader.onload = (e) => {
                 const data = new Uint8Array(e.target.result);
@@ -87,19 +85,19 @@ function CSVUploader() {
                 setWorkbook(wb);
                 const sheets = wb.SheetNames;
                 setSheetNames(sheets);
-                // Automatically select the first sheet if available:
                 if (sheets.length > 0) {
                     setSelectedSheet(sheets[0]);
-                    const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[sheets[0]], { header: 1, defval: '' });
+                    const jsonData = XLSX.utils.sheet_to_json(wb.Sheets[sheets[0]], {
+                        header: 1,
+                        defval: '',
+                    });
                     if (jsonData.length > 1) {
                         const headerRow = jsonData[0];
                         const rows = jsonData.slice(1);
                         setHeaders(headerRow);
                         setDataRows(rows);
                         const detected = autoDetectSimColumn(headerRow, rows);
-                        if (detected) {
-                            setSimColumn(detected);
-                        }
+                        if (detected) setSimColumn(detected);
                     } else {
                         setError('Excel sheet does not contain enough data.');
                     }
@@ -112,7 +110,6 @@ function CSVUploader() {
         }
     };
 
-    // Handler for when the user selects a different sheet in an Excel file
     const handleSheetChange = (e) => {
         const sheetName = e.target.value;
         setSelectedSheet(sheetName);
@@ -124,36 +121,53 @@ function CSVUploader() {
                 setHeaders(headerRow);
                 setDataRows(rows);
                 const detected = autoDetectSimColumn(headerRow, rows);
-                if (detected) {
-                    setSimColumn(detected);
-                } else {
-                    setSimColumn('');
-                }
+                if (detected) setSimColumn(detected);
+                else setSimColumn('');
+                // Reset manual override if switching sheets
+                setOverrideSerialColumn('');
             }
         }
     };
 
-    // Handler for when the user manually selects the SIM column (by letter)
+    // When user selects the SIM column (from the first select)
     const handleSimColumnChange = (e) => {
         setSimColumn(e.target.value);
     };
 
-    // Handler for when the user selects a SIM value from the filter dropdown
-    const handleSelectedSimChange = (e) => {
-        setSelectedSim(e.target.value);
+    // NEW handler for the manual override of the serial number column selection.
+    const handleOverrideSerialColumnChange = (e) => {
+        setOverrideSerialColumn(e.target.value);
     };
 
-    // Create options for SIM column selection based on header count.
-    // We'll generate column letters for each column index.
+    // When user selects a SIM value from the filter dropdown, fetch SQL data
+    const handleSelectedSimChange = async (e) => {
+        const sim = e.target.value;
+        setSelectedSim(sim);
+        setSqlData([]);
+        if (sim && window.dbAPI && window.dbAPI.getImportItemDetailsBySim) {
+            try {
+                const sqlResult = await window.dbAPI.getImportItemDetailsBySim(sim);
+                setSqlData(sqlResult);
+            } catch (err) {
+                console.error('Error fetching SQL data:', err);
+            }
+        }
+    };
+
+    // Options for selecting the SIM column based on header count.
+    // Each option shows the column letter and header (if available)
     const simColumnOptions = headers.map((header, index) => ({
         letter: columnIndexToLetter(index),
         display: `${columnIndexToLetter(index)}${header ? ': ' + header : ''}`,
     }));
 
-    // Group the SIM column values by name (if simColumn is selected)
+    // Determine which column to use: if the user has manually selected an override, use it.
+    const effectiveSimColumn = overrideSerialColumn || simColumn;
+
+    // Group SIM values from the file (if an effective SIM column is selected)
     let simGroups = {};
-    if (simColumn && dataRows.length > 0 && headers.length > 0) {
-        const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === simColumn);
+    if (effectiveSimColumn && dataRows.length > 0 && headers.length > 0) {
+        const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === effectiveSimColumn);
         if (colIndex !== -1) {
             dataRows.forEach((row) => {
                 const simVal = row[colIndex] ? row[colIndex].toString().trim() : '';
@@ -164,6 +178,9 @@ function CSVUploader() {
         }
     }
 
+    // Create a list of distinct CSV serial numbers from the effective column
+    const csvSerialNumbers = Object.keys(simGroups);
+
     return (
         <div>
             <h2>File Uploader</h2>
@@ -173,10 +190,8 @@ function CSVUploader() {
                 accept=".csv, application/vnd.ms-excel, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={handleFileChange}
             />
-
             {error && <p style={{ color: 'red' }}>{error}</p>}
 
-            {/* If Excel file has multiple sheets, let the user choose which one */}
             {sheetNames.length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
                     <label htmlFor="sheet-select">Select Sheet: </label>
@@ -190,10 +205,9 @@ function CSVUploader() {
                 </div>
             )}
 
-            {/* Dropdown for selecting the SIM column by letter */}
             {headers.length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
-                    <h3>Select the SIM Number Column</h3>
+                    <h3>Select the Serial Number Column (Auto-detected)</h3>
                     <select value={simColumn} onChange={handleSimColumnChange}>
                         <option value="">-- Select Column --</option>
                         {simColumnOptions.map((option, index) => (
@@ -205,12 +219,11 @@ function CSVUploader() {
                 </div>
             )}
 
-            {/* If SIM column is selected, show a filter dropdown based on grouped SIM values */}
-            {simColumn && Object.keys(simGroups).length > 0 && (
+            {effectiveSimColumn && Object.keys(simGroups).length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
-                    <h3>Filter by SIM</h3>
+                    <h3>Filter by Serial Number</h3>
                     <select value={selectedSim} onChange={handleSelectedSimChange}>
-                        <option value="">-- All SIMs --</option>
+                        <option value="">-- All Serial Numbers --</option>
                         {Object.entries(simGroups).map(([sim, count]) => (
                             <option key={sim} value={sim}>
                                 {sim} ({count})
@@ -220,31 +233,48 @@ function CSVUploader() {
                 </div>
             )}
 
-            {/* Preview of rows for the selected SIM filter (if any) */}
-            {simColumn && dataRows.length > 0 && (
+            {/* Additional select to override the serial number column */}
+            {headers.length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
-                    <h3>
-                        {selectedSim
-                            ? `Preview of Rows for SIM "${selectedSim}"`
-                            : `Preview of All Rows in Column "${simColumn}"`
-                        }
-                    </h3>
+                    <h3>Override Serial Number Column</h3>
+                    <select value={overrideSerialColumn} onChange={handleOverrideSerialColumnChange}>
+                        <option value="">-- Use Auto-Detected Column --</option>
+                        {simColumnOptions.map((option, index) => (
+                            <option key={index} value={option.letter}>
+                                {option.display}
+                            </option>
+                        ))}
+                    </select>
+                </div>
+            )}
+
+            {selectedSim && sqlData.length >= 0 && (
+                <div style={{ marginTop: '1rem' }}>
+                    <button onClick={() => setShowModal(true)}>Show SQL Data</button>
+                </div>
+            )}
+
+            {/* Pass the CSV serial numbers to the modal */}
+            <SQLDataModal
+                show={showModal}
+                onClose={() => setShowModal(false)}
+                selectedSim={selectedSim}
+                sqlData={sqlData}
+                csvSerialNumbers={csvSerialNumbers}
+                csvHeaders={headers}
+                fileRows={dataRows}  // Pass the actual file rows here
+            />
+
+
+
+            {effectiveSimColumn && dataRows.length > 0 && !selectedSim && (
+                <div style={{ marginTop: '1rem' }}>
+                    <h3>Preview of All Rows in Column "{effectiveSimColumn}"</h3>
                     <ul>
-                        {dataRows
-                            .filter((row) => {
-                                if (!selectedSim) return true;
-                                const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === simColumn);
-                                return row[colIndex] && row[colIndex].toString().trim() === selectedSim;
-                            })
-                            .slice(0, 10)
-                            .map((row, idx) => {
-                                const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === simColumn);
-                                return (
-                                    <li key={idx}>
-                                        {row[colIndex]}
-                                    </li>
-                                );
-                            })}
+                        {dataRows.slice(0, 10).map((row, idx) => {
+                            const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === effectiveSimColumn);
+                            return <li key={idx}>{row[colIndex]}</li>;
+                        })}
                     </ul>
                 </div>
             )}
