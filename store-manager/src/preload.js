@@ -17,5 +17,6 @@ contextBridge.exposeInMainWorld('dbAPI', {
     // NEW: Expose insertItems (for bulk inserting rows)
     insertItems: async (items) => {
         return await ipcRenderer.invoke('insert-items', items);
-    }
+    },
+    deleteImportItemDetail: async (itemNum) => { return await ipcRenderer.invoke('delete-item', itemNum) }
 });

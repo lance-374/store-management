@@ -18,7 +18,7 @@ function CSVUploader() {
     const [headers, setHeaders] = useState([]);
     const [dataRows, setDataRows] = useState([]);
     const [simColumn, setSimColumn] = useState('');
-    const [overrideSerialColumn, setOverrideSerialColumn] = useState(''); // NEW state for override column selection
+    const [overrideSerialColumn, setOverrideSerialColumn] = useState(''); // New state for override column selection
     const [selectedSim, setSelectedSim] = useState('');
     const [sqlData, setSqlData] = useState([]);
     const [error, setError] = useState(null);
@@ -47,7 +47,7 @@ function CSVUploader() {
         setHeaders([]);
         setDataRows([]);
         setSimColumn('');
-        setOverrideSerialColumn(''); // reset override column too
+        setOverrideSerialColumn('');
         setSelectedSim('');
         setSqlData([]);
         setSheetNames([]);
@@ -134,7 +134,7 @@ function CSVUploader() {
         setSimColumn(e.target.value);
     };
 
-    // NEW handler for the manual override of the serial number column selection.
+    // Handler for manual override.
     const handleOverrideSerialColumnChange = (e) => {
         setOverrideSerialColumn(e.target.value);
     };
@@ -155,13 +155,12 @@ function CSVUploader() {
     };
 
     // Options for selecting the SIM column based on header count.
-    // Each option shows the column letter and header (if available)
     const simColumnOptions = headers.map((header, index) => ({
         letter: columnIndexToLetter(index),
         display: `${columnIndexToLetter(index)}${header ? ': ' + header : ''}`,
     }));
 
-    // Determine which column to use: if the user has manually selected an override, use it.
+    // Determine which column to use for SIM values.
     const effectiveSimColumn = overrideSerialColumn || simColumn;
 
     // Group SIM values from the file (if an effective SIM column is selected)
@@ -178,7 +177,7 @@ function CSVUploader() {
         }
     }
 
-    // Create a list of distinct CSV serial numbers from the effective column
+    // Create a list of distinct SIM numbers from the effective column.
     const csvSerialNumbers = Object.keys(simGroups);
 
     return (
@@ -221,7 +220,7 @@ function CSVUploader() {
 
             {effectiveSimColumn && Object.keys(simGroups).length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
-                    <h3>Filter by Serial Number</h3>
+                    <h3>Filter by SIM Number</h3>
                     <select value={selectedSim} onChange={handleSelectedSimChange}>
                         <option value="">-- All Serial Numbers --</option>
                         {Object.entries(simGroups).map(([sim, count]) => (
@@ -233,7 +232,6 @@ function CSVUploader() {
                 </div>
             )}
 
-            {/* Additional select to override the serial number column */}
             {headers.length > 0 && (
                 <div style={{ marginTop: '1rem' }}>
                     <h3>Override Serial Number Column</h3>
@@ -254,7 +252,7 @@ function CSVUploader() {
                 </div>
             )}
 
-            {/* Pass the CSV serial numbers to the modal */}
+            {/* Pass the effectiveSimColumn as a prop */}
             <SQLDataModal
                 show={showModal}
                 onClose={() => setShowModal(false)}
@@ -263,9 +261,8 @@ function CSVUploader() {
                 csvSerialNumbers={csvSerialNumbers}
                 csvHeaders={headers}
                 fileRows={dataRows}  // Pass the actual file rows here
+                effectiveSimColumn={effectiveSimColumn}
             />
-
-
 
             {effectiveSimColumn && dataRows.length > 0 && !selectedSim && (
                 <div style={{ marginTop: '1rem' }}>

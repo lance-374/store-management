@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
+// Helper: convert a column letter (e.g., "A", "B", "AA") to a zero-based column index.
+function letterToIndex(letter) {
+    let index = 0;
+    for (let i = 0; i < letter.length; i++) {
+        index = index * 26 + (letter.charCodeAt(i) - 65 + 1);
+    }
+    return index - 1;
+}
+
 function SQLDataModal({
     show,
     onClose,
@@ -7,15 +16,22 @@ function SQLDataModal({
     sqlData,
     csvSerialNumbers = [],
     csvHeaders = [],
-    fileRows = []   // Full data rows from the uploaded CSV/Excel file.
+    fileRows = [],    // Full data rows from the uploaded CSV/Excel file.
+    effectiveSimColumn   // The letter of the SIM column (e.g., "B")
 }) {
     // Local state for our processed ImportIDNum (the converted SIM value)
     const [importID, setImportID] = useState(selectedSim);
+    // Local state to hold the SQL data locally (to update on deletion and insertion)
+    const [localSqlData, setLocalSqlData] = useState(sqlData);
 
-    // Update importID when the selectedSim prop changes.
     useEffect(() => {
         setImportID(selectedSim);
     }, [selectedSim]);
+
+    // When the sqlData prop changes, update our local state.
+    useEffect(() => {
+        setLocalSqlData(sqlData);
+    }, [sqlData]);
 
     // Handler that converts a SIM from "SIM 23-166D" to "SIM 23-166"
     const handleConvertSim = () => {
@@ -26,7 +42,7 @@ function SQLDataModal({
     };
 
     // These are the SQL table columns you want to map from the file.
-    const sqlTableColumns = ["ItemCaliber", "ItemManufacturer", "ItemValue", "ItemModel", "ItemSerialNum"];
+    const sqlTableColumns = ["ItemCaliber", "ItemManufacturer", "ItemValue", "ItemModel", "ItemSerialNum", "There Inventory #"];
 
     // Local state to store the user's mapping from SQL columns to CSV/Excel columns.
     const [columnMapping, setColumnMapping] = useState({});
@@ -52,10 +68,13 @@ function SQLDataModal({
         }));
     };
 
-    // Handler to create/upload a single new row for testing.
-    // It first gets the last available ItemNum from SQL and then processes only the first row in fileRows.
+    // Handler to create/upload new rows for the currently selected SIM.
     const handleCreateTable = async () => {
         try {
+            // Ensure we are in the renderer process.
+            if (typeof window === 'undefined' || !window.dbAPI) {
+                throw new Error("dbAPI is not available in this context.");
+            }
             // Get the last available ItemNum from SQL.
             const lastItemNum = await window.dbAPI.getLastItemNum(); // e.g., returns a number like 1000
 
@@ -64,30 +83,66 @@ function SQLDataModal({
                 return;
             }
 
-            // Only process the first row for testing.
-            const row = fileRows[0];
-            const newRow = {};
+            if (!effectiveSimColumn) {
+                alert("Effective SIM column is not set. Please select a SIM column.");
+                return;
+            }
 
-            // For each SQL column in your mapping, extract the CSV/Excel field.
-            sqlTableColumns.forEach(sqlCol => {
-                const mappedHeader = columnMapping[sqlCol];
-                // Find the index of the mapped header in the csvHeaders array.
-                const colIndex = csvHeaders.indexOf(mappedHeader);
-                newRow[sqlCol] = (colIndex >= 0) ? row[colIndex] : null;
+            // Convert the effective SIM column letter to a zero-based index.
+            const simColIndex = letterToIndex(effectiveSimColumn);
+
+            // Filter fileRows to only those rows where the SIM column value matches selectedSim.
+            const filteredRows = fileRows.filter(row => {
+                return row[simColIndex] && row[simColIndex].toString().trim() === selectedSim;
             });
 
-            // Set the new unique ItemNum by incrementing the last available one.
-            newRow.ItemNum = Number(lastItemNum) + 1;
-            // Set the ImportIDNum field (each row gets the same selected SIM).
-            newRow.ImportIDNum = importID;
+            if (filteredRows.length === 0) {
+                alert("No rows found for the selected SIM.");
+                return;
+            }
 
-            console.log("Creating table with new test row:", newRow);
-            // Call the API to insert the new row (wrapped in an array for compatibility with insertItems).
-            const result = await window.dbAPI.insertItems([newRow]);
-            alert('Test row inserted successfully!');
+            let counter = 1; // start counter for new ItemNum
+            // Iterate over each matching file row.
+            for (const row of filteredRows) {
+                let newRow = {};
+                // Map each SQL column using the columnMapping.
+                sqlTableColumns.forEach(sqlCol => {
+                    const mappedHeader = columnMapping[sqlCol];
+                    const colIndex = csvHeaders.indexOf(mappedHeader);
+                    newRow[sqlCol] = (colIndex >= 0) ? row[colIndex] : null;
+                });
+
+                // Set a new unique ItemNum and assign ImportIDNum.
+                newRow.ItemNum = Number(lastItemNum) + counter;
+                counter++;
+                newRow.ImportIDNum = importID;
+
+                console.log("Inserting row:", newRow);
+                // Insert the new row.
+                await window.dbAPI.insertItems([newRow]);
+                // Immediately update localSqlData to include the newly inserted row.
+                setLocalSqlData(prev => [...prev, newRow]);
+            }
+            alert(`${filteredRows.length} row(s) inserted successfully!`);
         } catch (error) {
             console.error('Error creating table:', error);
             alert('Error creating table');
+        }
+    };
+
+    // Handler to delete a row given its unique ItemNum.
+    const handleDeleteRow = async (itemNum) => {
+        try {
+            const rowsAffected = await window.dbAPI.deleteImportItemDetail(itemNum);
+            if (rowsAffected && rowsAffected > 0) {
+                alert(`Row with ItemNum ${itemNum} deleted successfully!`);
+                setLocalSqlData(prevData => prevData.filter(row => row.ItemNum !== itemNum));
+            } else {
+                alert(`No row deleted.`);
+            }
+        } catch (error) {
+            console.error('Error deleting row:', error);
+            alert('Error deleting row');
         }
     };
 
@@ -130,7 +185,6 @@ function SQLDataModal({
                 >
                     Close
                 </button>
-                {/* New button to convert the SIM string */}
                 <button
                     style={{
                         position: 'absolute',
@@ -143,24 +197,24 @@ function SQLDataModal({
                     Convert SIM
                 </button>
                 <h3 style={{ marginTop: '2rem' }}>
-                    {sqlData && sqlData.length > 0
+                    {localSqlData && localSqlData.length > 0
                         ? `SQL Data for ImportIDNum "${importID}"`
                         : `No SQL Data Found for ImportIDNum "${importID}". Create new data by mapping file columns to SQL columns.`}
                 </h3>
-                {sqlData && sqlData.length > 0 ? (
-                    // If SQL data exists, show it (with any matching ItemSerialNum highlighted)
+                {localSqlData && localSqlData.length > 0 ? (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
                             <tr>
-                                {Object.keys(sqlData[0]).map((key) => (
+                                {Object.keys(localSqlData[0]).map((key) => (
                                     <th key={key} style={{ border: '1px solid #ddd', padding: '8px' }}>
                                         {key}
                                     </th>
                                 ))}
+                                <th style={{ border: '1px solid #ddd', padding: '8px' }}>Action</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {sqlData.map((row, idx) => (
+                            {localSqlData.map((row, idx) => (
                                 <tr key={idx}>
                                     {Object.keys(row).map((key) => {
                                         const isMatch =
@@ -178,12 +232,16 @@ function SQLDataModal({
                                             </td>
                                         );
                                     })}
+                                    <td style={{ border: '1px solid #ddd', padding: '8px' }}>
+                                        <button onClick={() => handleDeleteRow(row.ItemNum)}>
+                                            Delete
+                                        </button>
+                                    </td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 ) : (
-                    // Mapping interface shown when there’s no SQL data yet.
                     <div style={{ marginTop: '2rem' }}>
                         <h4>Map CSV/Excel Columns to SQL Table Columns</h4>
                         {sqlTableColumns.map((sqlCol) => (
@@ -202,12 +260,11 @@ function SQLDataModal({
                                 </select>
                             </div>
                         ))}
-                        {/* Use our new handler for inserting a single test row */}
                         <button
                             style={{ padding: '0.5rem 1rem', marginTop: '1rem' }}
                             onClick={handleCreateTable}
                         >
-                            Upload Test Row
+                            Upload Test Row(s)
                         </button>
                     </div>
                 )}

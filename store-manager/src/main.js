@@ -6,7 +6,8 @@ const {
   getImportItemDetails,
   insertImportItemDetails,
   getLastItemNum,       // Make sure this is included.
-  insertItems
+  insertItems,
+  deleteImportItemDetail
 } = require('./api/db');
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -90,6 +91,17 @@ app.whenReady().then(async () => {
       throw error;
     }
   });
+
+  ipcMain.handle('delete-item', async (event, itemNum) => {
+    try {
+      const rowsAffected = await deleteImportItemDetail(itemNum);
+      return rowsAffected;
+    } catch (error) {
+      console.error('Error in delete-item handler:', error);
+      throw error;
+    }
+  });
+
 
   createWindow();
 
