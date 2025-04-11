@@ -75,56 +75,31 @@ async function insertItems(items) {
     const baseImportID = originalImportIDNum ? String(originalImportIDNum).slice(0, -1) : '';
 
     // STEP A: Retrieve from tblImportItemDetails all rows for the base ImportID.
-    // (These rows provide the allowed ItemSerialNum values and additional fields.)
+    // These rows provide the allowed ItemSerialNum values and additional base fields.
     const permitResult2 = await pool.request()
         .input('baseImportID', sql.VarChar(50), baseImportID)
         .query(`
-        SELECT 
-            ItemSerialNum, 
-            ItemType, 
-            ItemCaliber, 
-            ItemCountryOfMfg, 
-            ItemAction,
-            ItemBarrelLength,
-            ItemOverallLength,
-            ItemYOM,
-            ShipmentID,
-            ItemModel,
-            ItemManufacturer,
-            ItemValue
-        FROM tblImportItemDetails 
-        WHERE ImportIDNum = @baseImportID
-    `);
+            SELECT 
+                ItemSerialNum, 
+                ItemType, 
+                ItemCaliber, 
+                ItemCountryOfMfg, 
+                ItemAction,
+                ItemBarrelLength,
+                ItemOverallLength,
+                ItemYOM,
+                ShipmentID,
+                ItemModel,
+                ItemManufacturer,
+                ItemValue
+            FROM tblImportItemDetails 
+            WHERE ImportIDNum = @baseImportID
+        `);
 
-    let additionalFields = {
-        itemType: "",
-        baseCaliber: "",
-        itemCountryOfMfg: "",
-        itemAction: "",
-        itemBarrelLength: "",
-        itemOverallLength: "",
-        itemYOM: "",
-        shipmentID: "",
-        ItemModel: "",
-        ItemManufacturer: "",
-        ItemValue: ""
-    };
-    if (permitResult2.recordset.length > 0) {
-        const permitRow = permitResult2.recordset[0];
-        additionalFields = {
-            itemType: permitRow.ItemType ? String(permitRow.ItemType) : "",
-            baseCaliber: permitRow.ItemCaliber ? String(permitRow.ItemCaliber) : "",
-            itemCountryOfMfg: permitRow.ItemCountryOfMfg ? String(permitRow.ItemCountryOfMfg) : "",
-            itemAction: permitRow.ItemAction ? String(permitRow.ItemAction) : "",
-            itemBarrelLength: permitRow.ItemBarrelLength ? String(permitRow.ItemBarrelLength) : "",
-            itemOverallLength: permitRow.ItemOverallLength ? String(permitRow.ItemOverallLength) : "",
-            itemYOM: permitRow.ItemYOM ? String(permitRow.ItemYOM) : "",
-            shipmentID: permitRow.ShipmentID ? String(permitRow.ShipmentID) : "",
-            ItemModel: permitRow.ItemModel ? String(permitRow.ItemModel) : "",
-            ItemManufacturer: permitRow.ItemManufacturer ? String(permitRow.ItemManufacturer) : "",
-            ItemValue: permitRow.ItemValue ? String(permitRow.ItemValue) : ""
-        };
-    }
+    // Build an array of allowed serial numbers from the base records.
+    const baseSerialNumbers = permitResult2.recordset.map(r =>
+        (r.ItemSerialNum ? String(r.ItemSerialNum).trim() : '')
+    );
 
     // STEP B: Retrieve the ImptID from tblImportPermit using the full ImportIDNum.
     const permitResult = await pool.request()
@@ -136,111 +111,159 @@ async function insertItems(items) {
         imptID = String(permitResult.recordset[0].ImptID);
     }
 
-    // STEP C: Get the current max ItemNum once, then use a counter to increment it.
+    // STEP C: Get the current max ItemNum once (if needed for your table),
+    // but for our ItemCustID we'll use our own counter.
     const currentLastItemNum = await getLastItemNum();
-    let counter = 1;
 
-    // Compute the base for ItemCustID by taking originalImportIDNum, removing the "SIM " prefix,
-    // and then removing any hyphens.
+    // Compute the base for ItemCustID by taking the original ImportIDNum,
+    // removing the "SIM " prefix (if any), and removing hyphens.
     let baseCust = "";
     if (originalImportIDNum) {
         baseCust = String(originalImportIDNum)
-            .replace(/^SIM\s*/i, "")  // remove "SIM " prefix (case-insensitive)
-            .replace(/-/g, "");       // remove hyphens
+            .replace(/^SIM\s*/i, "")
+            .replace(/-/g, "");
     }
 
-    // STEP D: Iterate over all file rows (items) and insert only those whose ItemSerialNum is allowed.
+    // Determine the starting suffix value by querying the DB for the maximum suffix already used.
+    let lastSuffix = 0;
+    if (baseCust) {
+        // We assume the ItemCustID format is "baseCust-XX-<inventory>" where XX are two digits.
+        // The SUBSTRING starts at position (length of baseCust + 2) to extract the two-digit number.
+        const maxSuffixQuery = `
+            SELECT MAX(CAST(SUBSTRING(ItemCustID, ${baseCust.length + 2}, 2) AS INT)) AS MaxSuffix
+            FROM tblImportItemDetails
+            WHERE ItemCustID LIKE '${baseCust}-%'
+        `;
+        const maxSuffixResult = await pool.request().query(maxSuffixQuery);
+        if (maxSuffixResult.recordset &&
+            maxSuffixResult.recordset[0] &&
+            maxSuffixResult.recordset[0].MaxSuffix != null) {
+            lastSuffix = maxSuffixResult.recordset[0].MaxSuffix;
+        }
+    }
+
+    // STEP D: Iterate over all file rows (items) and insert only those whose file row's
+    // ItemSerialNum (trimmed) is found in the allowed baseSerialNumbers.
     for (const item of items) {
-        // Get file row's ItemSerialNum (as a trimmed string).
+        // Get file row's ItemSerialNum (trimmed).
         const fileSerial = item.ItemSerialNum ? String(item.ItemSerialNum).trim() : '';
-        // Only insert if the file's serial number is present in the baseSerialNumbers list.
+        // Only process if the file's serial number is found in the allowed list.
         if (!baseSerialNumbers.includes(fileSerial)) {
             continue;
         }
 
-        // Build the new row using file data and additional fields.
+        // Find the matching base record for this fileSerial.
+        const matchingRecord = permitResult2.recordset.find(r =>
+            r.ItemSerialNum && String(r.ItemSerialNum).trim() === fileSerial
+        );
+        if (!matchingRecord) {
+            continue;
+        }
+
+        // Retrieve the ItemValue from the CSV row using the mapping provided.
+        // Ensure we force the value to a string.
+        let csvItemValue = "";
+        if (item.ItemValue != null && String(item.ItemValue).trim() !== "") {
+            csvItemValue = String(item.ItemValue).trim();
+        }
+
+        // Log the type and value of csvItemValue for debugging.
+        console.log(`For ItemSerialNum "${fileSerial}", csvItemValue type: ${typeof csvItemValue} and value: "${csvItemValue}"`);
+
+        // Process ItemAction: if it is "BA", convert it to "B".
+        let itemAction = matchingRecord.ItemAction ? String(matchingRecord.ItemAction).trim() : "";
+        if (itemAction === "BA") {
+            itemAction = "B";
+        }
+
+        // Build the new row. For all fields except ItemValue and ItemAction, the data comes from the base record.
+        // For ItemValue, we now explicitly use the CSV string value.
         let newRow = {
             ItemSerialNum: fileSerial,
-            // Use the baseImportID values for these fields:
-            ItemCaliber: additionalFields.baseCaliber,
-            ItemManufacturer: additionalFields.ItemManufacturer,
-            ItemModel: additionalFields.ItemModel,
-            ItemValue: additionalFields.ItemValue,
-            ItemType: additionalFields.itemType,
-            ItemCountryOfMfg: additionalFields.itemCountryOfMfg,
-            ItemAction: additionalFields.itemAction,
-            ItemBarrelLength: additionalFields.itemBarrelLength,
-            ItemOverallLength: additionalFields.itemOverallLength,
-            ItemYOM: additionalFields.itemYOM,
-            ShipmentID: additionalFields.shipmentID,
+            ItemCaliber: matchingRecord.ItemCaliber ? String(matchingRecord.ItemCaliber) : "",
+            ItemManufacturer: matchingRecord.ItemManufacturer ? String(matchingRecord.ItemManufacturer) : "",
+            ItemModel: matchingRecord.ItemModel ? String(matchingRecord.ItemModel) : "",
+            ItemValue: String(csvItemValue), // Force as string
+            ItemType: matchingRecord.ItemType ? String(matchingRecord.ItemType) : "",
+            ItemCountryOfMfg: matchingRecord.ItemCountryOfMfg ? String(matchingRecord.ItemCountryOfMfg) : "",
+            ItemAction: itemAction, // Use the processed value (with "BA" replaced with "B")
+            ItemBarrelLength: matchingRecord.ItemBarrelLength ? String(matchingRecord.ItemBarrelLength) : "",
+            ItemOverallLength: matchingRecord.ItemOverallLength ? String(matchingRecord.ItemOverallLength) : "",
+            ItemYOM: matchingRecord.ItemYOM ? String(matchingRecord.ItemYOM) : "",
+            ShipmentID: matchingRecord.ShipmentID ? String(matchingRecord.ShipmentID) : "",
             ImportIDNum: originalImportIDNum,
             ImptID: imptID,
-            ItemNum: Number(currentLastItemNum) + counter
+            ItemNum: Number(currentLastItemNum) + lastSuffix + 1
         };
 
-        // Generate ItemCustID.
-        // Assume each item has a property "SelectedInventory" that is the starting inventory number.
-        // If not present, default to 0.
-        let inventoryStart = item.SelectedInventory ? Number(item.SelectedInventory) : 0;
-        // Pad the counter to two digits.
-        const counterString = counter.toString().padStart(2, "0");
-        newRow.ItemCustID = `${baseCust}-${counterString}-${inventoryStart + counter - 1}`;
+        // Retrieve the inventory value from the CSV row using the property "InventoryNo".
+        let inventoryValue = "0";
+        if (item.InventoryNo != null) {
+            inventoryValue = String(item.InventoryNo).trim();
+        }
 
-        counter++;
+        // Increment our local suffix counter for this insertion.
+        lastSuffix++;
 
-        // Now insert the new row.
+        // Generate ItemCustID as "BaseCust-XX-{inventoryValue}" where "XX" is derived from lastSuffix.
+        const counterString = lastSuffix.toString().padStart(2, "0");
+        newRow.ItemCustID = `${baseCust}-${counterString}-${inventoryValue}`;
+
+        // Insert the new row.
         await pool.request()
-            .input('importIDNum', sql.VarChar(50), newRow.ImportIDNum)
-            .input('imptID', sql.VarChar(50), newRow.ImptID)
-            .input('itemSerialNum', sql.VarChar(50), newRow.ItemSerialNum)
-            .input('itemCaliber', sql.VarChar(50), newRow.ItemCaliber)
-            .input('itemManufacturer', sql.VarChar(50), newRow.ItemManufacturer)
-            .input('itemModel', sql.VarChar(50), newRow.ItemModel)
-            .input('itemType', sql.VarChar(50), newRow.ItemType)
-            .input('itemCountryOfMfg', sql.VarChar(50), newRow.ItemCountryOfMfg)
-            .input('itemAction', sql.VarChar(50), newRow.ItemAction)
-            .input('itemBarrelLength', sql.VarChar(50), newRow.ItemBarrelLength)
-            .input('itemOverallLength', sql.VarChar(50), newRow.ItemOverallLength)
-            .input('itemYOM', sql.VarChar(50), newRow.ItemYOM)
-            .input('shipmentID', sql.VarChar(50), newRow.ShipmentID)
-            .input('itemCustID', sql.VarChar(50), newRow.ItemCustID)
+            .input('importIDNum', sql.VarChar, newRow.ImportIDNum)
+            .input('imptID', sql.VarChar, newRow.ImptID)
+            .input('itemSerialNum', sql.VarChar, newRow.ItemSerialNum)
+            .input('itemCaliber', sql.VarChar, newRow.ItemCaliber)
+            .input('itemManufacturer', sql.VarChar, newRow.ItemManufacturer)
+            .input('itemModel', sql.VarChar, newRow.ItemModel)
+            .input('itemValue', sql.VarChar, newRow.ItemValue)
+            .input('itemType', sql.VarChar, newRow.ItemType)
+            .input('itemCountryOfMfg', sql.VarChar, newRow.ItemCountryOfMfg)
+            .input('itemAction', sql.VarChar, newRow.ItemAction)
+            .input('itemBarrelLength', sql.VarChar, newRow.ItemBarrelLength)
+            .input('itemOverallLength', sql.VarChar, newRow.ItemOverallLength)
+            .input('itemYOM', sql.VarChar, newRow.ItemYOM)
+            .input('shipmentID', sql.VarChar, newRow.ShipmentID)
+            .input('itemCustID', sql.VarChar, newRow.ItemCustID)
             .query(`
-      INSERT INTO tblImportItemDetails 
-          (
-              ImportIDNum, 
-              ImptID, 
-              ItemSerialNum, 
-              ItemCaliber, 
-              ItemManufacturer, 
-              ItemModel, 
-              ItemType, 
-              ItemCountryOfMfg, 
-              ItemAction, 
-              ItemBarrelLength, 
-              ItemOverallLength, 
-              ItemYOM, 
-              ShipmentID,
-              ItemCustID
-          )
-      VALUES 
-          (
-              @importIDNum, 
-              @imptID, 
-              @itemSerialNum, 
-              @itemCaliber, 
-              @itemManufacturer, 
-              @itemModel, 
-              @itemType, 
-              @itemCountryOfMfg, 
-              @itemAction, 
-              @itemBarrelLength, 
-              @itemOverallLength, 
-              @itemYOM, 
-              @shipmentID,
-              @itemCustID
-          )
-  `);
-
+                INSERT INTO tblImportItemDetails 
+                    (
+                        ImportIDNum, 
+                        ImptID, 
+                        ItemSerialNum, 
+                        ItemCaliber, 
+                        ItemManufacturer, 
+                        ItemModel, 
+                        ItemValue,
+                        ItemType, 
+                        ItemCountryOfMfg, 
+                        ItemAction, 
+                        ItemBarrelLength, 
+                        ItemOverallLength, 
+                        ItemYOM, 
+                        ShipmentID,
+                        ItemCustID
+                    )
+                VALUES 
+                    (
+                        @importIDNum, 
+                        @imptID, 
+                        @itemSerialNum, 
+                        @itemCaliber, 
+                        @itemManufacturer, 
+                        @itemModel, 
+                        @itemValue,
+                        @itemType, 
+                        @itemCountryOfMfg, 
+                        @itemAction, 
+                        @itemBarrelLength, 
+                        @itemOverallLength, 
+                        @itemYOM, 
+                        @shipmentID,
+                        @itemCustID
+                    )
+            `);
     }
 
     return true;
@@ -250,13 +273,84 @@ async function insertItems(items) {
 
 
 
+
+
+// Retrieves allowed serial numbers and additional base fields for a given baseImportID.
+// Returns an object with { baseSerialNumbers, additionalFields }
+async function getBaseRecord(baseImportID) {
+    const pool = await connectToSQL();
+    const result = await pool.request()
+        .input('baseImportID', sql.VarChar(50), baseImportID)
+        .query(`
+            SELECT 
+                ItemSerialNum, 
+                ItemType, 
+                ItemCaliber, 
+                ItemCountryOfMfg, 
+                ItemAction,
+                ItemBarrelLength,
+                ItemOverallLength,
+                ItemYOM,
+                ShipmentID,
+                ItemModel,
+                ItemManufacturer,
+                ItemValue
+            FROM tblImportItemDetails
+            WHERE ImportIDNum = @baseImportID
+        `);
+
+    // Build an array of allowed serial numbers from the result.
+    const baseSerialNumbers = result.recordset.map(r =>
+        (r.ItemSerialNum ? String(r.ItemSerialNum).trim() : '')
+    );
+
+    // Use the first record from the result to populate additional base fields.
+    let additionalFields = {};
+    if (result.recordset.length > 0) {
+        const row = result.recordset[0];
+        additionalFields = {
+            ItemCaliber: row.ItemCaliber ? String(row.ItemCaliber) : "",
+            ItemManufacturer: row.ItemManufacturer ? String(row.ItemManufacturer) : "",
+            ItemModel: row.ItemModel ? String(row.ItemModel) : "",
+            ItemValue: row.ItemValue ? String(row.ItemValue) : "",
+            itemType: row.ItemType ? String(row.ItemType) : "",
+            itemCountryOfMfg: row.ItemCountryOfMfg ? String(row.ItemCountryOfMfg) : "",
+            itemAction: row.ItemAction ? String(row.ItemAction) : "",
+            itemBarrelLength: row.ItemBarrelLength ? String(row.ItemBarrelLength) : "",
+            itemOverallLength: row.ItemOverallLength ? String(row.ItemOverallLength) : "",
+            itemYOM: row.ItemYOM ? String(row.ItemYOM) : "",
+            shipmentID: row.ShipmentID ? String(row.ShipmentID) : ""
+        };
+    }
+    return { baseSerialNumbers, additionalFields };
+}
+
+// Retrieves the ImptID for the given full ImportIDNum.
+// Returns a string value (or an empty string if not found).
+async function getImptID(importIDNum) {
+    const pool = await connectToSQL();
+    const result = await pool.request()
+        .input('importIDNum', sql.VarChar(50), importIDNum)
+        .query('SELECT ImptID FROM tblImportPermit WHERE ImportIDNum = @importIDNum');
+
+    if (result.recordset.length > 0 && result.recordset[0].ImptID != null) {
+        return String(result.recordset[0].ImptID);
+    }
+    return "";
+}
+
+
+
+
 async function deleteImportItemDetail(itemNum) {
     const pool = await connectToSQL();
     const result = await pool.request()
         .input('itemNum', sql.Int, itemNum)
         .query('DELETE FROM tblImportItemDetails WHERE ItemNum = @itemNum');
-    return result.rowsAffected;
+    // Return the number of rows affected (first element of the array)
+    return result.rowsAffected[0] || 0;
 }
+
 
 
 module.exports = {
@@ -266,5 +360,7 @@ module.exports = {
     getImportItemDetailsBySim,
     getLastItemNum,    // Expose the new function
     insertItems,        // Expose the new function
-    deleteImportItemDetail
+    deleteImportItemDetail,
+    getBaseRecord,     // New helper function
+    getImptID          // New helper function
 };

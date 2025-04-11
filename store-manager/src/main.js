@@ -7,7 +7,9 @@ const {
   insertImportItemDetails,
   getLastItemNum,       // Make sure this is included.
   insertItems,
-  deleteImportItemDetail
+  deleteImportItemDetail,
+  getBaseRecord,
+  getImptID
 } = require('./api/db');
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -102,6 +104,27 @@ app.whenReady().then(async () => {
     }
   });
 
+  // NEW: IPC handler for getBaseRecord
+  ipcMain.handle('get-base-record', async (event, baseImportID) => {
+    try {
+      const record = await getBaseRecord(baseImportID);
+      return record;
+    } catch (error) {
+      console.error('IPC: get-base-record error:', error);
+      throw error;
+    }
+  });
+
+  // NEW: IPC handler for getImptID
+  ipcMain.handle('get-impt-id', async (event, importIDNum) => {
+    try {
+      const id = await getImptID(importIDNum);
+      return id;
+    } catch (error) {
+      console.error('IPC: get-impt-id error:', error);
+      throw error;
+    }
+  });
 
   createWindow();
 

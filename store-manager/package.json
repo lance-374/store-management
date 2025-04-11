@@ -5,13 +5,15 @@
   "description": "My Electron application description",
   "main": ".webpack/main/index.js",
   "scripts": {
-    "start": "electron-forge start",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
-    "publish": "electron-forge publish",
-    "lint": "echo \"No linting configured\"",
-    "build-react": "webpack --config webpack.renderer.config.js"
-  },
+  "start": "electron-forge start",
+  "package": "electron-forge package",
+  "make": "electron-forge make --out-dir release",
+  "publish": "electron-forge publish",
+  "lint": "echo \"No linting configured\"",
+  "build-react": "webpack --config webpack.renderer.config.js",
+  "build": "npm run build-react",
+  "build-exe": "electron-builder --win"
+},
   "keywords": [],
   "author": {
     "name": "Jamari Mitchell",
@@ -35,6 +37,7 @@
     "babel-loader": "^10.0.0",
     "css-loader": "^6.11.0",
     "electron": "35.1.4",
+    "electron-builder": "^26.0.12",
     "node-loader": "^2.1.0",
     "style-loader": "^3.3.4",
     "webpack": "^5.98.0",
@@ -51,6 +54,26 @@
   },
   "config": {
     "forge": {
+      "makers": [
+        {
+          "name": "@electron-forge/maker-squirrel",
+          "config": {}
+        },
+        {
+          "name": "@electron-forge/maker-zip",
+          "platforms": [
+            "darwin"
+          ]
+        },
+        {
+          "name": "@electron-forge/maker-deb",
+          "config": {}
+        },
+        {
+          "name": "@electron-forge/maker-rpm",
+          "config": {}
+        }
+      ],
       "plugins": [
         {
           "name": "@electron-forge/plugin-webpack",
@@ -74,5 +97,29 @@
         }
       ]
     }
+  },
+  "build": {
+  "appId": "com.yourcompany.store-manager",
+  "directories": {
+    "output": "release",
+    "buildResources": "assets"
+  },
+  "files": [
+    "{.webpack,build,main.js,package.json}"
+  ],
+  "asar": false,
+  "win": {
+    "target": "nsis",
+    "icon": "assets/icon.ico"
+  },
+  "mac": {
+    "target": "dmg",
+    "icon": "assets/icon.icns"
+  },
+  "linux": {
+    "target": "AppImage",
+    "icon": "assets/icon.png"
   }
+}
+
 }

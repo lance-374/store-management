@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+
 contextBridge.exposeInMainWorld('dbAPI', {
     getImportItemDetailsBySim: async (sim) => {
         return await ipcRenderer.invoke('get-import-item-details-by-sim', sim);
@@ -18,5 +19,7 @@ contextBridge.exposeInMainWorld('dbAPI', {
     insertItems: async (items) => {
         return await ipcRenderer.invoke('insert-items', items);
     },
-    deleteImportItemDetail: async (itemNum) => { return await ipcRenderer.invoke('delete-item', itemNum) }
+    deleteImportItemDetail: async (itemNum) => { return await ipcRenderer.invoke('delete-item', itemNum) },
+    getBaseRecord: async (itemNum) => { return await ipcRenderer.invoke('get-base-record', itemNum) },
+    getImptID: async (itemNum) => { return await ipcRenderer.invoke('get-impt-id', itemNum) }
 });
