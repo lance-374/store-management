@@ -270,9 +270,104 @@ async function insertItems(items) {
 }
 
 
+async function insertAllItems(items) {
+    const pool = await connectToSQL();
 
+    // Ensure there are items to process.
+    if (!items || items.length === 0) return true;
 
+    // Get the original ImportIDNum from the CSV (assume they are all the same).
+    const originalImportIDNum = items[0].ImportIDNum ? String(items[0].ImportIDNum).trim() : "";
 
+    // Retrieve the ImptID from tblImportPermit using the full ImportIDNum.
+    const permitResult = await pool.request()
+        .input('importIDNum', sql.VarChar(50), originalImportIDNum)
+        .query('SELECT ImptID FROM tblImportPermit WHERE ImportIDNum = @importIDNum');
+
+    let imptID = "";
+    if (permitResult.recordset.length > 0 && permitResult.recordset[0].ImptID != null) {
+        imptID = String(permitResult.recordset[0].ImptID);
+    }
+
+    // Iterate over each CSV/Excel item.
+    for (const item of items) {
+        // Build the new row using the CSV values.
+        const newRow = {
+            ImportIDNum: item.ImportIDNum ? String(item.ImportIDNum).trim() : "",
+            ImptID: imptID,
+            ItemManufacturer: item.ItemManufacturer ? String(item.ItemManufacturer).trim() : "",
+            ItemCountryOfMfg: item.ItemCountryOfMfg ? String(item.ItemCountryOfMfg).trim() : "",
+            ItemType: item.ItemType ? String(item.ItemType).trim() : "",
+            ItemCaliber: item.ItemCaliber ? String(item.ItemCaliber).trim() : "",
+            ItemQty: item.ItemQty ? Number(item.ItemQty) : 0,
+            ItemValue: item.ItemValue ? String(item.ItemValue).trim() : "",
+            ItemUSMilCatagory: item.ItemUSMilCatagory ? String(item.ItemUSMilCatagory).trim() : "",
+            ItemModel: item.ItemModel ? String(item.ItemModel).trim() : "",
+            ItemSerialNum: item.ItemSerialNum ? String(item.ItemSerialNum).trim() : "",
+            ItemNew: typeof item.ItemNew !== 'undefined' ? Boolean(item.ItemNew) : false,
+            ItemAction: item.ItemAction ? String(item.ItemAction).trim() : "",
+            ItemCustID: item.ItemCustID ? String(item.ItemCustID).trim() : ""
+        };
+
+        try {
+            const result = await pool.request()
+                .input('ImportIDNum', sql.VarChar, newRow.ImportIDNum)
+                .input('imptID', sql.VarChar, newRow.ImptID)
+                .input('ItemManufacturer', sql.VarChar, newRow.ItemManufacturer)
+                .input('ItemCountryOfMfg', sql.VarChar, newRow.ItemCountryOfMfg)
+                .input('ItemType', sql.VarChar, newRow.ItemType)
+                .input('ItemCaliber', sql.VarChar, newRow.ItemCaliber)
+                .input('ItemQty', sql.Int, newRow.ItemQty)
+                .input('ItemValue', sql.VarChar, newRow.ItemValue)
+                .input('ItemUSMilCatagory', sql.VarChar, newRow.ItemUSMilCatagory)
+                .input('ItemModel', sql.VarChar, newRow.ItemModel)
+                .input('ItemSerialNum', sql.VarChar, newRow.ItemSerialNum)
+                .input('ItemNew', sql.Bit, newRow.ItemNew)
+                .input('ItemAction', sql.VarChar, newRow.ItemAction)
+                .input('ItemCustID', sql.VarChar, newRow.ItemCustID)
+                .query(`
+          INSERT INTO tblImportItemDetails
+            (
+              ImportIDNum,
+              ImptID,
+              ItemManufacturer,
+              ItemCountryOfMfg,
+              ItemType,
+              ItemCaliber,
+              ItemQty,
+              ItemValue,
+              ItemUSMilCatagory,
+              ItemModel,
+              ItemSerialNum,
+              ItemNew,
+              ItemAction,
+              ItemCustID
+            )
+          VALUES
+            (
+              @ImportIDNum,
+              @imptID,
+              @ItemManufacturer,
+              @ItemCountryOfMfg,
+              @ItemType,
+              @ItemCaliber,
+              @ItemQty,
+              @ItemValue,
+              @ItemUSMilCatagory,
+              @ItemModel,
+              @ItemSerialNum,
+              @ItemNew,
+              @ItemAction,
+              @ItemCustID
+            )
+        `);
+            console.log("Inserted newRow:", newRow, "Rows affected:", result.rowsAffected);
+        } catch (error) {
+            console.error("Error inserting newRow:", newRow, error);
+        }
+    }
+    return true;
+}
 
 
 // Retrieves allowed serial numbers and additional base fields for a given baseImportID.
@@ -362,5 +457,6 @@ module.exports = {
     insertItems,        // Expose the new function
     deleteImportItemDetail,
     getBaseRecord,     // New helper function
-    getImptID          // New helper function
+    getImptID,         // New helper function
+    insertAllItems
 };

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import SQLDataModal from './modal/SQLDataModal';
+import SQLFullUploadModal from './modal/SQLFullUploadModal';
 
 // Helper: convert a zero-based column index to Excel-style letter(s)
 function columnIndexToLetter(index) {
@@ -18,7 +19,7 @@ function CSVUploader() {
     const [headers, setHeaders] = useState([]);
     const [dataRows, setDataRows] = useState([]);
     const [simColumn, setSimColumn] = useState('');
-    const [overrideSerialColumn, setOverrideSerialColumn] = useState(''); // New state for override column selection
+    const [overrideSerialColumn, setOverrideSerialColumn] = useState('');
     const [selectedSim, setSelectedSim] = useState('');
     const [sqlData, setSqlData] = useState([]);
     const [error, setError] = useState(null);
@@ -26,6 +27,7 @@ function CSVUploader() {
     const [workbook, setWorkbook] = useState(null);
     const [selectedSheet, setSelectedSheet] = useState('');
     const [showModal, setShowModal] = useState(false);
+    const [showFullUploadModal, setShowFullUploadModal] = useState(false);
 
     // Auto-detect SIM column by scanning cells in the data rows
     const autoDetectSimColumn = (headerRow, rows) => {
@@ -114,7 +116,10 @@ function CSVUploader() {
         const sheetName = e.target.value;
         setSelectedSheet(sheetName);
         if (workbook) {
-            const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' });
+            const jsonData = XLSX.utils.sheet_to_json(
+                workbook.Sheets[sheetName],
+                { header: 1, defval: '' }
+            );
             if (jsonData.length > 1) {
                 const headerRow = jsonData[0];
                 const rows = jsonData.slice(1);
@@ -166,7 +171,9 @@ function CSVUploader() {
     // Group SIM values from the file (if an effective SIM column is selected)
     let simGroups = {};
     if (effectiveSimColumn && dataRows.length > 0 && headers.length > 0) {
-        const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === effectiveSimColumn);
+        const colIndex = headers.findIndex(
+            (_, i) => columnIndexToLetter(i) === effectiveSimColumn
+        );
         if (colIndex !== -1) {
             dataRows.forEach((row) => {
                 const simVal = row[colIndex] ? row[colIndex].toString().trim() : '';
@@ -246,13 +253,15 @@ function CSVUploader() {
                 </div>
             )}
 
-            {selectedSim && sqlData.length >= 0 && (
-                <div style={{ marginTop: '1rem' }}>
-                    <button onClick={() => setShowModal(true)}>Show SQL Data</button>
+            {/* Render both buttons when file rows exist */}
+            {dataRows.length > 0 && (
+                <div style={{ marginTop: '1rem', display: 'flex', gap: '1rem' }}>
+                    <button onClick={() => setShowModal(true)}>Fixed Serial #s</button>
+                    <button onClick={() => setShowFullUploadModal(true)}>Blanket #s</button>
                 </div>
             )}
 
-            {/* Pass the effectiveSimColumn as a prop */}
+            {/* SQL Data Modal for SIM-filtered upload */}
             <SQLDataModal
                 show={showModal}
                 onClose={() => setShowModal(false)}
@@ -260,8 +269,21 @@ function CSVUploader() {
                 sqlData={sqlData}
                 csvSerialNumbers={csvSerialNumbers}
                 csvHeaders={headers}
-                fileRows={dataRows}  // Pass the actual file rows here
+                fileRows={dataRows} // Pass the actual file rows here
                 effectiveSimColumn={effectiveSimColumn}
+            />
+
+            {/* SQL Full Upload Modal for full file upload */}
+            <SQLFullUploadModal
+                show={showFullUploadModal}
+                onClose={() => setShowFullUploadModal(false)}
+                selectedSim={selectedSim}
+                sqlData={sqlData}
+                csvSerialNumbers={csvSerialNumbers}
+                csvHeaders={headers}
+                fileRows={dataRows}    // Rows come from the selected sheet
+                effectiveSimColumn={effectiveSimColumn}
+                selectedSheet={selectedSheet}    // Pass the selected sheet name
             />
 
             {effectiveSimColumn && dataRows.length > 0 && !selectedSim && (
@@ -269,7 +291,9 @@ function CSVUploader() {
                     <h3>Preview of All Rows in Column "{effectiveSimColumn}"</h3>
                     <ul>
                         {dataRows.slice(0, 10).map((row, idx) => {
-                            const colIndex = headers.findIndex((_, i) => columnIndexToLetter(i) === effectiveSimColumn);
+                            const colIndex = headers.findIndex(
+                                (_, i) => columnIndexToLetter(i) === effectiveSimColumn
+                            );
                             return <li key={idx}>{row[colIndex]}</li>;
                         })}
                     </ul>

@@ -9,8 +9,27 @@ const {
   insertItems,
   deleteImportItemDetail,
   getBaseRecord,
-  getImptID
+  getImptID,
+  insertAllItems
 } = require('./api/db');
+
+// Global reference to the main window.
+let mainWindow;
+
+// Override console.log to also send logs to the renderer.
+const originalConsoleLog = console.log;
+console.log = function (...args) {
+  // Log to the terminal.
+  originalConsoleLog.apply(console, args);
+  // If the main window exists, send the log message to the renderer.
+  if (mainWindow && mainWindow.webContents) {
+    // Convert all arguments to strings (stringify objects if needed)
+    const logMessage = args.map(arg =>
+      typeof arg === 'object' ? JSON.stringify(arg) : arg
+    ).join(' ');
+    mainWindow.webContents.send('log-message', logMessage);
+  }
+};
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (require('electron-squirrel-startup')) {
@@ -18,7 +37,7 @@ if (require('electron-squirrel-startup')) {
 }
 
 const createWindow = () => {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 800,
     height: 600,
     webPreferences: {
@@ -90,6 +109,16 @@ app.whenReady().then(async () => {
       return result;
     } catch (error) {
       console.error('IPC: insert-items error:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('insert-all-items', async (event, items) => {
+    try {
+      const result = await insertAllItems(items);
+      return result;
+    } catch (error) {
+      console.error('IPC: insert-all-items error:', error);
       throw error;
     }
   });

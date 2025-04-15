@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('dbAPI', {
     insertItems: async (items) => {
         return await ipcRenderer.invoke('insert-items', items);
     },
+    insertAllItems: async (items) => {
+        return await ipcRenderer.invoke('insert-all-items', items);
+    },
     deleteImportItemDetail: async (itemNum) => { return await ipcRenderer.invoke('delete-item', itemNum) },
     getBaseRecord: async (itemNum) => { return await ipcRenderer.invoke('get-base-record', itemNum) },
     getImptID: async (itemNum) => { return await ipcRenderer.invoke('get-impt-id', itemNum) }
