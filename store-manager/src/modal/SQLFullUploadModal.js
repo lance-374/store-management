@@ -14,6 +14,7 @@ function letterToIndex(letter) {
   ------------------
   This modal lets the user map the CSV/Excel columns into the SQL table columns
   for the selected SIM. It only uploads data if no SQL data exists for that SIM.
+  
   The fields being mapped are defined by sqlTableColumns.
 */
 function SQLFullUploadModal({
@@ -24,7 +25,7 @@ function SQLFullUploadModal({
     csvSerialNumbers = [],
     csvHeaders = [],
     fileRows = [],      // All file rows from the CSV/Excel upload.
-    effectiveSimColumn
+    effectiveSimColumn  // Excel column letter for SIM values.
 }) {
     // Processed ImportID: here we use the selected SIM as the ImportIDNum.
     const [importID, setImportID] = useState(selectedSim);
@@ -32,11 +33,7 @@ function SQLFullUploadModal({
     const [localSqlData, setLocalSqlData] = useState(sqlData);
     // Mapping state: the key names come from sqlTableColumns.
     const [columnMapping, setColumnMapping] = useState({});
-    // New state to store the permit ImptID from tblImportPermit.
-    const [imptIDFromDB, setImptIDFromDB] = useState("");
-
     console.log("Selected SIM:", selectedSim);
-    console.log("Current Column Mapping:", columnMapping);
 
     // Define the SQL table columns to map.
     const sqlTableColumns = [
@@ -55,29 +52,13 @@ function SQLFullUploadModal({
         "ItemCustID"
     ];
 
-    // Update the importID state if selectedSim changes.
     useEffect(() => {
         setImportID(selectedSim);
     }, [selectedSim]);
 
-    // Update the local SQL data state if sqlData prop changes.
     useEffect(() => {
         setLocalSqlData(sqlData);
     }, [sqlData]);
-
-    // Fetch the permit ImptID for the selected ImportIDNum.
-    useEffect(() => {
-        if (typeof window !== 'undefined' && window.dbAPI && selectedSim) {
-            window.dbAPI.getImptID(selectedSim)
-                .then(id => {
-                    setImptIDFromDB(id);
-                    console.log("Fetched ImptID from tblImportPermit:", id);
-                })
-                .catch(error => {
-                    console.error("Error fetching ImptID:", error);
-                });
-        }
-    }, [selectedSim]);
 
     // (Optional) Convert a SIM value like "SIM 23-166D" to "SIM 23-166" if needed.
     const handleConvertSim = () => {
@@ -119,7 +100,8 @@ function SQLFullUploadModal({
                 throw new Error("dbAPI is not available in this context.");
             }
 
-            if (sqlData && sqlData.length > 0) {
+            // Do not upload if data already exists.
+            if (localSqlData && localSqlData.length > 0) {
                 alert("Data for the selected SIM already exists. No new data will be uploaded.");
                 return;
             }
@@ -134,34 +116,73 @@ function SQLFullUploadModal({
                 return;
             }
 
-            // Log mapping details along with the effective sheet (if provided) for debugging.
-            console.log("handleCreateTable triggered");
-            console.log("Effective SIM Column:", effectiveSimColumn);
-            console.log("Selected SIM:", selectedSim);
-            console.log("Column Mapping:", columnMapping);
-            console.log("Total File Rows:", fileRows.length);
+            // Get the zero-based index for the SIM column.
+            const simColIndex = letterToIndex(effectiveSimColumn);
 
-            // Map fileRows into SQL format using the column mapping.
-            const mappedRows = fileRows.map((row) => {
-                const mappedRow = {};
-                for (const [sqlCol, csvColumn] of Object.entries(columnMapping)) {
-                    mappedRow[sqlCol] = row[letterToIndex(csvColumn)] || "";
-                }
-                // Include ImportIDNum using the selected SIM.
-                mappedRow.ImportIDNum = selectedSim;
-                return mappedRow;
+            // Filter file rows to include only those that match the selected SIM.
+            const filteredRows = fileRows.filter(row => {
+                return row[simColIndex] && row[simColIndex].toString().trim() === selectedSim;
             });
-            console.log("Mapped Rows Preview:", mappedRows.slice(0, 5)); // Preview first 5 rows
+            console.log("Filtered Rows:", filteredRows);
 
-            // Now, call the dbAPI to handle the insertion.
-            const result = await window.dbAPI.insertAllItems(mappedRows);
-            console.log("Insert result:", result);
+            if (filteredRows.length === 0) {
+                alert("No rows found for the selected SIM.");
+                return;
+            }
 
-            // Update the view by re-fetching the SQL data using getImportItemDetailsBySim.
-            const newData = await window.dbAPI.getImportItemDetailsBySim(selectedSim);
+            // Validate that the mapping for "ItemSerialNum" exists.
+            const serialMappingHeader = columnMapping["ItemSerialNum"];
+            const serialColIndex = csvHeaders.indexOf(serialMappingHeader);
+            if (serialColIndex === -1) {
+                alert("Mapping for 'ItemSerialNum' is not configured correctly.");
+                return;
+            }
+
+            let insertedCount = 0;
+            // Process each filtered row.
+            for (const row of filteredRows) {
+                console.log("Raw CSV row:", row);
+                // Get the CSV serial number.
+                const csvSerialValue = row[serialColIndex] ? row[serialColIndex].toString().trim() : '';
+                if (!csvSerialValue) {
+                    continue;
+                }
+
+                // Prepare an object that will hold the mapped values.
+                const newItem = {};
+                // For each SQL column, find the mapped CSV header and get its value.
+                for (const sqlCol of sqlTableColumns) {
+                    const mappingHeader = columnMapping[sqlCol];
+                    const colIndex = csvHeaders.indexOf(mappingHeader);
+                    let cellValue = "";
+                    if (colIndex !== -1 && row[colIndex] != null) {
+                        cellValue = row[colIndex].toString().trim();
+                    }
+                    // For "ImportIDNum", override with the processed importID.
+                    if (sqlCol === "ImportIDNum") {
+                        newItem[sqlCol] = importID;
+                    } else {
+                        newItem[sqlCol] = cellValue;
+                    }
+                }
+
+                // Enforce using the CSV value for ItemSerialNum.
+                newItem["ItemSerialNum"] = csvSerialValue;
+                // Log the mapped row before sending it to the backend.
+                console.log("Mapped newItem to send:", newItem);
+
+                // Call the SQL insertion function (assumed to be provided via window.dbAPI.insertAllItems).
+                await window.dbAPI.insertAllItems([newItem]);
+                console.log("Backend acknowledged insertion for row:", newItem);
+                insertedCount++;
+            }
+
+            alert(`${insertedCount} row(s) inserted successfully!`);
+            const newData = await window.dbAPI.getImportItemDetailsBySim(importID);
             setLocalSqlData(newData);
         } catch (error) {
-            console.error("Error in handleCreateTable:", error);
+            console.error('Error creating table:', error);
+            alert('Error creating table');
         }
     };
 
@@ -176,8 +197,8 @@ function SQLFullUploadModal({
                 alert(`No row deleted.`);
             }
         } catch (error) {
-            console.error("Error deleting row:", error);
-            alert("Error deleting row");
+            console.error('Error deleting row:', error);
+            alert('Error deleting row');
         }
     };
 
@@ -236,12 +257,6 @@ function SQLFullUploadModal({
                         ? `SQL Data for ImportIDNum "${importID}"`
                         : `No SQL Data Found for ImportIDNum "${importID}". Create new data by mapping file columns to SQL columns.`}
                 </h3>
-                {/* Display the fetched ImptID from tblImportPermit */}
-                {imptIDFromDB && (
-                    <h4 style={{ marginBottom: '1rem' }}>
-                        Permit ID (ImptID): {imptIDFromDB}
-                    </h4>
-                )}
                 {localSqlData && localSqlData.length > 0 ? (
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                         <thead>
